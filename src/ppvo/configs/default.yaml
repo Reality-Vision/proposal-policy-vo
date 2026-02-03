@@ -1,0 +1,40 @@
+dataset:
+  name: tum
+  sequence: freiburg1_xyz
+  start: 0
+  max_frames: 2000
+  step: 1
+
+camera:
+  # TUM fr1 intrinsic
+  fx: 517.3
+  fy: 516.5
+  cx: 318.6
+  cy: 255.3
+
+orb:
+  nfeatures: 2000
+  scaleFactor: 1.2
+  nlevels: 8
+  edgeThreshold: 31
+  fastThreshold: 20
+  ratio: 0.8
+  min_matches: 150
+
+emat:
+  ransac_prob: 0.999
+  ransac_thresh_px: 1.0
+  min_inliers: 100
+  min_inlier_ratio: 0.30
+  recover_pose_min_inliers: 80
+
+policy:
+  prefer: ["emat", "const_vel"]
+
+const_vel:
+  enabled: true
+
+output:
+  save_every: 1
+  write_traj: true
+  write_metrics: true

@@ -1,0 +1,153 @@
+# src/ppvo/modules/pnp.py
+from __future__ import annotations
+
+import cv2
+import numpy as np
+
+from ..system.proposal import Proposal, Evidence
+from ..geom.se3 import Rt_to_T
+
+
+def _median_reproj_error_px(
+    X_ref: np.ndarray,
+    x_px: np.ndarray,
+    K: np.ndarray,
+    rvec: np.ndarray,
+    tvec: np.ndarray,
+    inlier_mask: np.ndarray | None,
+) -> float:
+    # Project and compute per-point reprojection error
+    proj, _ = cv2.projectPoints(X_ref, rvec, tvec, K, None)  # (N,1,2)
+    proj = proj.reshape(-1, 2)
+    err = np.linalg.norm(proj - x_px, axis=1)
+
+    if inlier_mask is not None and inlier_mask.size == err.size:
+        err = err[inlier_mask.astype(bool)]
+    if err.size == 0:
+        return float("inf")
+    return float(np.median(err))
+
+
+def propose_pnp(
+    X_prev: np.ndarray,
+    x_cur: np.ndarray,
+    K: np.ndarray,
+    *,
+    reproj_thresh_px: float = 3.0,
+    ransac_conf: float = 0.999,
+    max_iters: int = 200,
+    min_points: int = 30,
+    min_inliers: int = 50,
+    use_initial_guess: bool = False,
+    init_T_cur_prev: np.ndarray | None = None,
+) -> Proposal:
+    """
+    Estimate relative pose T_cur_prev using PnP RANSAC.
+
+    Args:
+        X_prev: (N,3) 3D points in prev/reference frame coordinates.
+        x_cur:  (N,2) corresponding 2D points in current image (pixels).
+        K:      (3,3) intrinsics.
+        reproj_thresh_px: RANSAC reprojection threshold in pixels.
+        min_points: minimum correspondences to attempt PnP.
+        min_inliers: minimum inliers to accept as valid.
+        use_initial_guess: whether to provide an initial guess to solvePnPRansac.
+        init_T_cur_prev: (4,4) initial guess for T_cur_prev if available.
+
+    Returns:
+        Proposal("pnp", T_cur_prev, Evidence, valid, reason)
+    """
+    I = np.eye(4, dtype=np.float64)
+    ev = Evidence(num_inliers=0, inlier_ratio=0.0, reproj_median_px=None)
+
+    if X_prev is None or x_cur is None:
+        return Proposal("pnp", I, ev, valid=False, reason="REJECT_PNP_NO_INPUT")
+
+    if X_prev.shape[0] != x_cur.shape[0] or X_prev.shape[0] < min_points:
+        return Proposal(
+            "pnp",
+            I,
+            ev,
+            valid=False,
+            reason=f"REJECT_PNP_TOO_FEW_POINTS:{int(0 if X_prev is None else X_prev.shape[0])}",
+        )
+
+    X = np.asarray(X_prev, dtype=np.float64).reshape(-1, 3)
+    x = np.asarray(x_cur, dtype=np.float64).reshape(-1, 2)
+    K64 = np.asarray(K, dtype=np.float64)
+
+    # OpenCV expects shape (N,1,3) and (N,1,2) or (N,3)/(N,2) works too.
+    # We'll keep (N,3) and (N,2).
+
+    # Optional initial guess
+    rvec = None
+    tvec = None
+    if use_initial_guess and init_T_cur_prev is not None:
+        T = np.asarray(init_T_cur_prev, dtype=np.float64)
+        R0 = T[:3, :3]
+        t0 = T[:3, 3]
+        rvec, _ = cv2.Rodrigues(R0)
+        tvec = t0.reshape(3, 1)
+
+    try:
+        ok, rvec_est, tvec_est, inliers = cv2.solvePnPRansac(
+            objectPoints=X,
+            imagePoints=x,
+            cameraMatrix=K64,
+            distCoeffs=None,
+            rvec=rvec,
+            tvec=tvec,
+            useExtrinsicGuess=bool(use_initial_guess and rvec is not None and tvec is not None),
+            iterationsCount=int(max_iters),
+            reprojectionError=float(reproj_thresh_px),
+            confidence=float(ransac_conf),
+            flags=cv2.SOLVEPNP_EPNP,  # good default; you can switch to ITERATIVE after RANSAC if desired
+        )
+    except cv2.error:
+        return Proposal("pnp", I, ev, valid=False, reason="REJECT_PNP_OPENCV_ERROR")
+
+    if not ok or inliers is None or inliers.size == 0:
+        return Proposal("pnp", I, ev, valid=False, reason="REJECT_PNP_RANSAC_FAILED")
+
+    inliers = inliers.reshape(-1).astype(int)
+    num_inliers = int(inliers.size)
+    ev.num_inliers = num_inliers
+    ev.inlier_ratio = float(num_inliers) / float(X.shape[0] + 1e-9)
+
+    if num_inliers < min_inliers:
+        # still compute reproj median for debugging
+        inlier_mask = np.zeros((X.shape[0],), dtype=np.uint8)
+        inlier_mask[inliers] = 1
+        ev.reproj_median_px = _median_reproj_error_px(X, x, K64, rvec_est, tvec_est, inlier_mask)
+        return Proposal("pnp", I, ev, valid=False, reason=f"REJECT_PNP_TOO_FEW_INLIERS:{num_inliers}")
+
+    # (Optional) refine with ITERATIVE using inliers
+    X_in = X[inliers]
+    x_in = x[inliers]
+    try:
+        ok2, rvec_ref, tvec_ref = cv2.solvePnP(
+            objectPoints=X_in,
+            imagePoints=x_in,
+            cameraMatrix=K64,
+            distCoeffs=None,
+            rvec=rvec_est,
+            tvec=tvec_est,
+            useExtrinsicGuess=True,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        if ok2:
+            rvec_est, tvec_est = rvec_ref, tvec_ref
+    except cv2.error:
+        # If refine fails, keep RANSAC estimate
+        pass
+
+    # Evidence: reprojection median on inliers
+    inlier_mask = np.zeros((X.shape[0],), dtype=np.uint8)
+    inlier_mask[inliers] = 1
+    ev.reproj_median_px = _median_reproj_error_px(X, x, K64, rvec_est, tvec_est, inlier_mask)
+
+    R, _ = cv2.Rodrigues(rvec_est)
+    t = tvec_est.reshape(3)
+    T_cur_prev = Rt_to_T(R, t)
+
+    return Proposal("pnp", T_cur_prev, ev, valid=True, reason="PNP_OK")
