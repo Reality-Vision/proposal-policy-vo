@@ -24,6 +24,7 @@ For each frame pair *(prev → cur)*, the system generates multiple pose **propo
 
 Example proposal sources:
 - `emat`: Essential matrix + `recoverPose` (geometry-only)
+- `vggt`: Vision Geometry Transformer (deep learning-based, optional)
 - `const_vel`: constant-velocity fallback (motion prior)
 
 The chosen proposal is committed to the trajectory, and every decision is logged in telemetry for debugging and analysis.
@@ -42,6 +43,7 @@ ppvo/
 ├── modules/
 │   ├── orb_match.py        # ORB feature matching
 │   ├── emat.py             # Essential matrix estimation
+│   ├── vggt.py             # VGGT deep learning pose estimation (optional)
 │   ├── triangulate.py      # Triangulation
 │   └── const_vel.py        # Constant velocity model
 ├── system/
@@ -347,26 +349,75 @@ orb:
 
 ---
 
-## VGGT Proposal (Optional)
+## VGGT Proposal (Optional Deep Learning-Based Pose Estimation)
 
-If you want to use the VGGT proposal, install the extra dependencies and enable it in the config.
+[VGGT (Vision Geometry Transformer)](https://github.com/facebookresearch/vggt) is a deep learning model for visual odometry that can estimate camera poses directly from RGB image pairs. This is an **optional** proposal source that complements the traditional geometry-based methods.
 
-Install:
-```
-pip install torch torchvision  # choose the right CUDA build for your system
+### Features
+- **End-to-end learning**: Trained on large-scale datasets for robust pose estimation
+- **GPU acceleration**: Requires CUDA for optimal performance (CPU mode available but slower)
+- **Priority in policy**: When enabled, VGGT is prioritized between PnP and essential matrix methods
+- **Automatic model download**: Downloads pre-trained weights from HuggingFace on first run
+
+### Installation
+
+#### Option 1: Using pip extras (recommended)
+```bash
+# Install PyTorch with CUDA support first (adjust for your CUDA version)
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Install VGGT as an optional dependency
 pip install -e .[vggt]
 ```
-If your environment doesn't resolve the extra, you can install VGGT directly:
-```
+
+#### Option 2: Direct installation
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install "vggt @ git+https://github.com/facebookresearch/vggt.git"
 ```
 
-Enable in `src/ppvo/configs/default.yaml`:
+#### Option 3: Using Docker (easiest)
+VGGT dependencies are already included in the Docker image. Just enable it in the config.
+
+### Configuration
+
+Enable VGGT in `src/ppvo/configs/default.yaml`:
+
 ```yaml
 vggt:
-  enabled: true
-  allow_cpu: false
-  clear_cache_every: 0
+  enabled: true                  # Set to false to disable VGGT
+  allow_cpu: false               # Set to true to allow CPU inference (slow)
+  clear_cache_every: 0           # Clear GPU cache every N frames (0=disabled)
+  weights_url: "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
+  # weights_path: "/path/to/local/model.pt"  # Optional: use local weights instead
+```
+
+### Policy Priority
+
+When VGGT is enabled, the decision policy prioritizes proposals in this order:
+1. **PnP** (if available, with quality checks)
+2. **VGGT** (if enabled and successful)
+3. **Essential Matrix** (geometry-based, with quality checks)
+4. **Constant Velocity** (fallback)
+
+### Performance Notes
+
+- **First run**: Downloads ~4GB model weights (cached for future runs)
+- **GPU memory**: Requires ~2-3GB GPU memory
+- **Speed**: ~100-200ms per frame on modern GPUs (RTX 30/40 series)
+- **CPU mode**: 10-50x slower, not recommended for real-time use
+
+### Troubleshooting
+
+If VGGT fails to load:
+```bash
+# Check CUDA availability
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
+
+# Test VGGT import
+python -c "from vggt.models.vggt import VGGT; print('VGGT OK')"
+
+# Check logs in telemetry for failure reasons (REJECT_VGGT_*)
 ```
 
 ---
