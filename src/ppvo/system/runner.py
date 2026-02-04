@@ -9,6 +9,7 @@ from .policy import PolicyS1
 from ..modules.orb_match import orb_match
 from ..modules.emat import propose_emat
 from ..modules.const_vel import propose_const_vel
+from ..modules.vggt import propose_vggt
 from ..geom.se3 import inv_T
 
 
@@ -56,7 +57,16 @@ def step(state: SystemState, policy: PolicyS1, cfg: dict, telemetry: Telemetry) 
     prop_cv = propose_const_vel(state.last_T_cur_prev)
     proposals.append(prop_cv)
 
-    # 2.2 emat proposal (only if enough matches)
+    # 2.2 vggt proposal (optional, RGB-only)
+    if bool(cfg.get("vggt", {}).get("enabled", False)):
+        prop_vggt = propose_vggt(
+            state.prev.img_gray,
+            state.cur.img_gray,
+            cfg.get("vggt", {}),
+        )
+        proposals.append(prop_vggt)
+
+    # 2.3 emat proposal (only if enough matches)
     min_matches = int(cfg["orb"].get("min_matches", cfg.get("emat", {}).get("min_matches", 120)))
     if pts_prev.shape[0] >= min_matches:
         prop_emat = propose_emat(

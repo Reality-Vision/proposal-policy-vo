@@ -60,11 +60,72 @@ ppvo/
 
 ## Installation
 
-### Prerequisites
+### Option 1: Docker (Recommended)
+
+#### Prerequisites
+- Docker
+- Docker Compose (optional, but recommended)
+
+#### Setup with Docker Compose
+
+1. Clone the repository:
+```bash
+git clone https://github.com/Reality-Vision/proposal-policy-vo
+cd proposal-policy-vo
+```
+
+2. Download TUM dataset to `./data` directory:
+```bash
+mkdir -p data
+cd data
+wget https://vision.in.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz
+tar -xzf rgbd_dataset_freiburg1_xyz.tgz
+cd ..
+```
+
+3. Build and run with Docker Compose:
+```bash
+docker-compose up --build
+```
+
+4. Or run with custom parameters:
+```bash
+docker-compose run --rm ppvo python src/ppvo/scripts/run_tum.py \
+    --tum_dir /data/rgbd_dataset_freiburg1_xyz \
+    --config src/ppvo/configs/default.yaml \
+    --out_dir /outputs
+```
+
+#### Setup with Docker only
+
+1. Build the Docker image:
+```bash
+docker build -t ppvo:latest .
+```
+
+2. Run the container (with GPU support):
+```bash
+docker run --rm \
+    --gpus all \
+    --runtime=nvidia \
+    -v $(pwd)/data:/data \
+    -v $(pwd)/outputs:/outputs \
+    ppvo:latest \
+    python src/ppvo/scripts/run_tum.py \
+        --tum_dir /data/rgbd_dataset_freiburg1_xyz \
+        --config src/ppvo/configs/default.yaml \
+        --out_dir /outputs
+```
+
+**Note**: The Docker image is built with NVIDIA CUDA 12.2 support. Remove `--gpus all --runtime=nvidia` if you don't have a GPU.
+
+### Option 2: Local Installation
+
+#### Prerequisites
 - Python 3.8+
 - miniconda or conda
 
-### Setup
+#### Setup
 
 1. Clone the repository:
 ```bash
@@ -82,6 +143,142 @@ This will install the package with its dependencies:
 - opencv-python
 - pyyaml
 - matplotlib (for visualization)
+
+---
+
+## Development Environment
+
+### VSCode Dev Container (Recommended for Development)
+
+For the best development experience, use VSCode with Dev Containers. This provides a consistent, isolated development environment with all tools pre-configured.
+
+#### Prerequisites
+- [Visual Studio Code](https://code.visualstudio.com/)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop)
+- [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) for VSCode
+- **For GPU support**: [NVIDIA Docker runtime](https://github.com/NVIDIA/nvidia-docker) (NVIDIA GPU required)
+
+#### Setup Steps
+
+1. Open the project in VSCode:
+```bash
+code .
+```
+
+2. When prompted, click **"Reopen in Container"**, or:
+   - Press `F1` or `Ctrl+Shift+P` (Cmd+Shift+P on Mac)
+   - Type "Dev Containers: Reopen in Container"
+   - Press Enter
+
+3. VSCode will build the development container (first time takes a few minutes)
+
+4. Once the container is running, you're ready to develop!
+
+#### What's Included
+
+The dev container includes:
+- Python 3.10 with all project dependencies
+- Development tools: pylint, black, flake8, mypy, pytest
+- Debugging tools: gdb, ipdb
+- Pre-configured VSCode extensions:
+  - Python language support
+  - Pylance (intelligent code completion)
+  - Black formatter (auto-format on save)
+  - Linters (pylint, flake8)
+  - Git integration
+  - AutoDocstring
+- Git and common utilities (zsh, oh-my-zsh)
+
+#### Development Workflow
+
+```bash
+# All commands run inside the container
+
+# Run the VO pipeline
+python src/ppvo/scripts/run_tum.py --tum_dir /workspace/data/dataset --config src/ppvo/configs/default.yaml
+
+# Run tests (if available)
+pytest
+
+# Format code
+black src/
+
+# Lint code
+pylint src/ppvo/
+
+# Interactive Python
+ipython
+```
+
+#### Tips
+- Your workspace is mounted at `/workspace` in the container
+- Bash history is persisted across container rebuilds
+- Any changes you make to files are immediately reflected on your host machine
+- To rebuild the container: `F1` → "Dev Containers: Rebuild Container"
+
+### GPU Support
+
+This project is now configured with **NVIDIA GPU support** for accelerated computing.
+
+#### Prerequisites for GPU
+- NVIDIA GPU with CUDA support
+- [NVIDIA Docker runtime](https://github.com/NVIDIA/nvidia-docker) installed
+- NVIDIA drivers installed on host machine
+
+#### Verify GPU Access
+
+After opening in the dev container or running with Docker Compose, verify GPU access:
+
+```bash
+# Check NVIDIA driver
+nvidia-smi
+
+# Check CUDA availability in Python
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA devices: {torch.cuda.device_count()}')"
+```
+
+#### What's Included for GPU
+- CUDA 12.2 base environment
+- PyTorch with CUDA support (pre-installed in dev container)
+- CUDA toolkit and libraries
+- Automatic GPU device access (`--gpus=all`)
+
+#### Using GPU in Your Code
+
+```python
+import torch
+
+# Check if CUDA is available
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+else:
+    device = torch.device("cpu")
+    print("Using CPU")
+
+# Move your tensors/models to GPU
+# tensor = tensor.to(device)
+# model = model.to(device)
+```
+
+#### Docker Compose with GPU
+
+The [docker-compose.yml](docker-compose.yml) is already configured for GPU support:
+
+```bash
+# Run with GPU
+docker-compose up --build
+
+# Or run specific command
+docker-compose run --rm ppvo python -c "import torch; print(torch.cuda.is_available())"
+```
+
+#### Troubleshooting GPU
+
+If GPU is not detected:
+1. Verify NVIDIA drivers: `nvidia-smi` on host
+2. Check Docker GPU support: `docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi`
+3. Ensure NVIDIA Docker runtime is installed: [Installation Guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
 
 ---
 
@@ -146,6 +343,30 @@ policy:
 orb:
   nfeatures: 2000
   ratio: 0.8
+```
+
+---
+
+## VGGT Proposal (Optional)
+
+If you want to use the VGGT proposal, install the extra dependencies and enable it in the config.
+
+Install:
+```
+pip install torch torchvision  # choose the right CUDA build for your system
+pip install -e .[vggt]
+```
+If your environment doesn't resolve the extra, you can install VGGT directly:
+```
+pip install "vggt @ git+https://github.com/facebookresearch/vggt.git"
+```
+
+Enable in `src/ppvo/configs/default.yaml`:
+```yaml
+vggt:
+  enabled: true
+  allow_cpu: false
+  clear_cache_every: 0
 ```
 
 ---

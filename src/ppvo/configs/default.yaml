@@ -28,6 +28,12 @@ emat:
   min_inlier_ratio: 0.30
   recover_pose_min_inliers: 80
 
+vggt:
+  enabled: true
+  allow_cpu: false
+  clear_cache_every: 0
+  weights_url: "https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt"
+
 policy:
   prefer: ["emat", "const_vel"]
 

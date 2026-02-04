@@ -136,14 +136,17 @@ def main() -> None:
     ap.add_argument("--out_dir", type=str, default="outputs")
     ap.add_argument("--visualize", action="store_true", help="Enable real-time trajectory visualization")
     ap.add_argument("--viz_update_every", type=int, default=10, help="Update visualization every N frames")
+    ap.add_argument("--log_every", type=int, default=50, help="Log progress every N frames")
     args = ap.parse_args()
 
+    print(f"[INFO] Loading config: {args.config}")
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     seq_name = cfg["dataset"]["sequence"]
     out_dir = Path(args.out_dir) / seq_name
     out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[INFO] Output dir: {out_dir}")
 
     # Camera intrinsics
     fx = float(cfg["camera"]["fx"])
@@ -152,7 +155,9 @@ def main() -> None:
     cy = float(cfg["camera"]["cy"])
     K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
 
+    print(f"[INFO] Loading TUM sequence: {args.tum_dir}")
     seq = TumRgbSequence(args.tum_dir)
+    print(f"[INFO] Sequence frames: {len(seq)}")
 
     state = SystemState(K=K)
     policy = PolicyS1(cfg)
@@ -170,6 +175,7 @@ def main() -> None:
     ts_list: list[float] = []
     frame_count = 0
 
+    print(f"[INFO] Starting loop: start={start} step={step_stride} max_frames={max_frames}")
     for idx, ts, img_gray in seq.iter_gray(start=start, step=step_stride, max_frames=max_frames):
         frame = FrameData(idx=idx, ts=ts, img_gray=img_gray)
 
@@ -190,6 +196,10 @@ def main() -> None:
 
         ts_list.append(ts)
         frame_count += 1
+
+        # Progress log
+        if args.log_every > 0 and (frame_count % args.log_every == 0):
+            print(f"[INFO] Frame {frame_count} / {max_frames if max_frames else '?'}")
 
         # Update visualization
         if visualizer is not None and frame_count % args.viz_update_every == 0:

@@ -12,6 +12,11 @@ class PolicyS1:
             pnp.reason = "ACCEPT_PNP"
             return pnp
 
+        vggt = next((p for p in proposals if p.name == "vggt" and p.valid), None)
+        if vggt:
+            vggt.reason = "ACCEPT_VGGT"
+            return vggt
+
         emat = next((p for p in proposals if p.name == "emat" and p.valid), None)
         if emat and emat.evidence.num_inliers >= self.cfg["emat"]["min_inliers"] and \
            emat.evidence.inlier_ratio >= self.cfg["emat"]["min_inlier_ratio"]:
